@@ -2,6 +2,12 @@
 
 # We want to know what packages not by vendor "Fedora Project" are being used by
 # a currently running "Clementine" as it streams an AAC music stream over the Internet.
+#
+# Sample output:
+#
+# /usr/lib64/libfaad.so.2.0.0 --0--> Vendor = rpms.kwizart.net, Name = faad2-libs
+# /usr/lib64/gstreamer-0.10/libgstfaad.so --0--> Vendor = RPM Fusion, Name = gstreamer-plugins-bad
+# /usr/lib64/gstreamer-0.10/libgstffmpeg.so --0--> Vendor = Koji, Name = gstreamer-ffmpeg
 
 # Step 1: Get all processes
 
