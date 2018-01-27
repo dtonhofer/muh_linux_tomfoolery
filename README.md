@@ -1,7 +1,7 @@
 muh_linux_tomfoolery
 ====================
 
-Scripts that I edit on muh linux machine
+Scripts that I edit on my linux machine.
 
 `print_hostname_results.sh`
 ---------------------------
@@ -30,7 +30,7 @@ A sample output:
     Transient hostname via 'hostnamectl'              : sigyn.homelinux.org
     Pretty hostname via 'hostnamectl'                 : 
 
-Like pages from the Necronomicon, studying `hostname` leads down a rabbit hole. 
+Studying `hostname` leads down a rabbit hole. 
 
 * Kernel settings are set via `/etc/sysctl.conf` (see `man sysctl.conf`)
 * `systemd` additionally sets from `/etc/sysctl.d/*.conf` (see `man sysctl.d`)
@@ -41,3 +41,22 @@ Like pages from the Necronomicon, studying `hostname` leads down a rabbit hole.
 * See also: http://jblevins.org/log/hostname
 * But things may have changed with the introduction of "systemd", see http://www.freedesktop.org/wiki/Software/systemd/hostnamed and http://www.freedesktop.org/software/systemd/man/hostnamectl.html
 
+`myssql56_query_log_analysis.pl`
+--------------------------------
+
+* Last update: 2018-01-27
+* License: MIT license, see https://opensource.org/licenses/MIT
+* Script written in the context of https://serverfault.com/questions/894074/mysql-general-query-log-analysis
+
+If you are doing system/software archeology and have a MySQL 5.6 query log and want to get some statistics out of it to see who connects, and how many queries they issue and what they queries they issue, then this script may help. It read a MySQL 5.6 query log on stdin and builds a statistic over the queries. 
+
+There are two statistics, chosen by the `my $coarse = 1/0;` line:
+
+* Coarse-grained statistics resulting in a list if users and query counts only.
+* Fine-grained statistics also grouping the SQL queries into "bins" and print the "representative" query and the bin sizes too. Queries are put into the same "bin" when their Levenshtein distance (editing distance) to the query that initiated bin creation (the template) is "small enough" (in this case, within 10% of the mean of the query lengths). A better program would parse the SQL and compare the parse trees to see whether these only differ by constants. Still, this heuristic approach seems to work somewhat. 
+
+For this script, one needs the "LevenshteinXS" library, which is backed by C code. The "Levensthein" library is too slow.
+ 
+Processing speed: With LevenstheinXS, we process 35959949 log lines in 640 minutes: *936 lines/s* on a Intel(R) Core(TM) i3-6100 CPU @ 3.70GHz with an SSD.
+
+Evidently, if you have the general query log, you are aware of data protection issues.
