@@ -3,6 +3,13 @@ muh_linux_tomfoolery
 
 Scripts that I edit on my linux machine.
 
+The scripts under `ssh_login`
+-----------------------------
+
+Connect to a remote machine running SSH by typing the name of the machine on the command line. Because I can't be bothered to remember the command line options or the many (login,hostname) tuples.
+
+This is just a simple tool to enable easier login to a given set of machines from a vanilla Linux workstation; no special SSH key management occurs; we do not even use an SSH agent.
+
 `print_hostname_results.sh`
 ---------------------------
 

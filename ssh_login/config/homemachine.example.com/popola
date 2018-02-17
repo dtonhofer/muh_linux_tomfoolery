@@ -1,0 +1,7 @@
+DESC          = Cloud machine AWS Ireland (Fedora 27, nano, 100 GiB SSD)
+HARDCODED_DNS = %THIS%.example.com
+# HARDCODED_IP  = 
+USER          = fedora
+PRIVKEY       = %USER%@(%THIS%.example.com).privkey
+# PORT          = 22
+
