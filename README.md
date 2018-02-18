@@ -10,6 +10,27 @@ Connect to a remote machine running SSH by typing the name of the machine on the
 
 This is just a simple tool to enable easier login to a given set of machines from a vanilla Linux workstation; no special SSH key management occurs; we do not even use an SSH agent.
 
+`verify_checksum.sh`
+--------------------
+
+Make verifying a file's checksum easy! Constanly annoyed by not knowing which checksum you have in front of you today and not ready to eyeball the result? Use this!
+
+Check it:
+
+`verify_checksum file.tgz [SHA1, SHA256, MD5 checksum]`
+
+...or you can exchange arguments because you have again forgotten whether the file comes first or last:
+
+`verify_checksum [SHA1, SHA256, MD5 checksum] file.tgz`
+
+...or you can compute the various checksums of a file:
+
+`verify_checksum file.tgz`
+
+...or you can compare two files:
+
+`verify_checkusm file1.tgz file2.tgz`
+
 `print_hostname_results.sh`
 ---------------------------
 
