@@ -4,7 +4,7 @@
 # Author:   David Tonhofer
 # Rights:   Public Domain
 #
-# Make verifying a file's checksum easy! Constanly annoyed by not knowing 
+# Make verifying a file's checksum easy! Constanly annoyed by not knowing
 # which checksum you have in front of you today and not ready to eyeball
 # the result of md5sum? Use this!
 #
@@ -69,12 +69,12 @@ function one_arg_perform {
    else
       local PROG
       for PROG in "${hasher[@]}"; do
-         which "$PROG" >/dev/null 2>&1
-         if [[ $? != 0 ]]; then
+         if ! command -v "$PROG" >/dev/null 2>&1; then
             echo "(Program '$PROG' not on path - skipping)" >&2
          else
-            local RESULT=$($PROG "$ARG" | cut --field=1 --delimiter=' ')
-            printf "%9s: %s\n" "$PROG" "$RESULT"
+            local RESULT
+            RESULT=$($PROG "$ARG" | cut --field=1 --delimiter=' ')
+            printf "%9s: %s\\n" "$PROG" "$RESULT"
          fi
       done
       return 0
@@ -92,13 +92,13 @@ function one_arg_perform {
 
 function recognize_hash {
    local UHASH=$1
-   if [[ -n $(echo "$UHASH" | grep --perl-regex '^[0-9a-f]{32}$') ]]; then
+   if echo "$UHASH" | grep -q --perl-regex '^[0-9a-f]{32}$'; then
       return 1 # md5
-   elif [[ -n $(echo "$UHASH" | grep --perl-regex '^[0-9a-f]{40}$') ]]; then
+   elif echo "$UHASH" | grep -q --perl-regex '^[0-9a-f]{40}$'; then
       return 2 # sha1
-   elif [[ -n $(echo "$UHASH" | grep --perl-regex '^[0-9a-f]{64}$') ]]; then
+   elif echo "$UHASH" | grep -q --perl-regex '^[0-9a-f]{64}$'; then
       return 3 # sha256
-   elif [[ -n $(echo "$UHASH" | grep --perl-regex '^[0-9a-f]{128}$') ]]; then
+   elif echo "$UHASH" | grep -q --perl-regex '^[0-9a-f]{128}$'; then
       return 4 # sha512
    else
       return 0
@@ -118,24 +118,22 @@ function verify_hash_btm {
    local FILE=$2
    local UHASH=$3
    local PROG=${hasher[$WHAT_HASH]}
-   which "$PROG" >/dev/null 2>&1
-   if [[ $? != 0 ]]; then
+   if ! command -v "$PROG" >/dev/null 2>&1; then
       echo "Program '$PROG' not on path" >&2
       return 101
    else
-      # >>> Compute!
-      local RESULT=$("$PROG" "$FILE")
-      # <<< 
-      local RES=$?
-      if [[ $? != 0 ]]; then
+      # Compute!
+      local RESULT
+      if ! RESULT=$("$PROG" "$FILE"); then
          echo "A problem occurred computing hashsum of '$FILE'" >&2
          return 100
       fi
-      local CMPWITH=$(echo "$RESULT" | cut --fields=1 --delimiter=' ' | tr '[:upper:]' '[:lower:]')
+      local CMPWITH
+      CMPWITH=$(echo "$RESULT" | cut --fields=1 --delimiter=' ' | tr '[:upper:]' '[:lower:]')
       if [[ $CMPWITH == "$UHASH" ]]; then
          echo "OK: Hash MATCHES using $PROG on '$FILE'"
          return 0
-      else 
+      else
          echo "BAD: Hash DOES NOT MATCH using $PROG on '$FILE'"
          echo "$UHASH -- should be"
          echo "$CMPWITH -- as is"
@@ -145,7 +143,7 @@ function verify_hash_btm {
 }
 
 # ---
-# Given a file and a hash, verify! 
+# Given a file and a hash, verify!
 # It has already been checked that the file exists.
 # Return: 99: unrecognized hash
 #        100: Error computing hash
@@ -157,16 +155,17 @@ function verify_hash_btm {
 function verify_hash_top {
    local FILE=$1
    local HASH=$2
-   local UHASH=$(echo "$HASH" | tr '[:upper:]' '[:lower:]')
+   local UHASH
+   UHASH=$(echo "$HASH" | tr '[:upper:]' '[:lower:]')
    recognize_hash "$UHASH";
    local WHAT_HASH=$?
    case $WHAT_HASH in
-   0) 
+   0)
       echo "Could not recognize '$HASH' as either MD5 or SHA(1,256,512)" >&2
       return 99
       ;;
-   *) 
-      verify_hash_btm "$WHAT_HASH" "$FILE" "$UHASH"; 
+   *)
+      verify_hash_btm "$WHAT_HASH" "$FILE" "$UHASH";
       return $?
       ;;
    esac
@@ -182,15 +181,17 @@ function compare_two_files {
    local FILE1=$1
    local FILE2=$2
    for PROG in "${hasher[@]}"; do
-      which "$PROG" >/dev/null 2>&1
-      if [[ $? != 0 ]]; then
+      command -v "$PROG" >/dev/null 2>&1
+      if ! command -v "$PROG" >/dev/null 2>&1; then
          echo "(Program '$PROG' not on path - skipping)" >&2
       else
-         local RESULT1=$($PROG "$FILE1" | cut --field=1 --delimiter=' ')
-         local RESULT2=$($PROG "$FILE2" | cut --field=1 --delimiter=' ')
+         local RESULT1
+         RESULT1=$($PROG "$FILE1" | cut --field=1 --delimiter=' ')
+         local RESULT2
+         RESULT2=$($PROG "$FILE2" | cut --field=1 --delimiter=' ')
          if [[ $RESULT1 == "$RESULT2" ]]; then
             echo "OK: Hash MATCHES using $PROG ($RESULT1)"
-         else 
+         else
             echo "BAD: Hash DOES NOT MATCH using $PROG"
             echo "$RESULT1 -- for '$FILE1'"
             echo "$RESULT2 -- fro '$FILE2'"
@@ -214,28 +215,28 @@ if [[ -n $ARG1 && -n $ARG2 ]]; then
    FILE=
    HASH=
    case $RES in
-   0) 
+   0)
       echo "None of the arguments designates a file" >&2
       exit 2
       # 2: Bad arguments
       ;;
-   1) 
+   1)
       FILE=$ARG1; HASH=$ARG2
       ;;
-   2) 
+   2)
       FILE=$ARG2; HASH=$ARG1
       ;;
-   3) 
+   3)
       compare_two_files "$ARG1" "$ARG2"
       exit $?
       #    0: All hashes match
       #    1: Some hashes do not match
       ;;
-   *)  
+   *)
    esac
    case $RES in
-   1|2) 
-      verify_hash_top "$FILE" "$HASH" 
+   1|2)
+      verify_hash_top "$FILE" "$HASH"
       exit $?
       #    0: Hash matches
       #    1: Hash does not match
@@ -245,26 +246,25 @@ if [[ -n $ARG1 && -n $ARG2 ]]; then
       ;;
    esac
 elif [[ -n $ARG1 ]]; then
-   one_arg_perform "$ARG1"; 
+   one_arg_perform "$ARG1";
    RES=$?
    case $RES in
-   0) 
+   0)
       exit 0
       ;;
-   1) 
+   1)
       echo "The argument '$ARG1' does not designate a file" >&2
       exit 2
       # 2: Bad arguments
       ;;
-   *) 
+   *)
       echo "Bad return value, fix code!!" >&2
       exit 102
-      # 102: Internal error 
+      # 102: Internal error
       ;;
    esac
-else 
+else
    echo "No arguments? Give at least a file and possibly a hashsum" >&2
    exit 2
    # 2: bad arguments
 fi
-
