@@ -4,27 +4,43 @@
 # Author:   David Tonhofer
 # Rights:   Public Domain
 #
+# HISTORY
+# -------
+#
+# 2018-02-18: First version
+# 2018-04-02: Merged-in modifications by ChallahuAkbar
+#
+# QUALITY CONTROL
+# ---------------
+#
+# This script 100% passes "shellcheck" (https://www.shellcheck.net/) thanks to
+# modifications by ChallahuAkbar.
+#
+# ABOUT
+# -----
+#
 # Make verifying a file's checksum easy! Constanly annoyed by not knowing
 # which checksum you have in front of you today and not ready to eyeball
 # the result of md5sum? Use this!
 #
-# Check it:
+# SYNOPSIS
+# --------
+#
+#    ...check a checksum against file 'file.tgz':
 #
 # verify_checksum file.tgz [SHA1, SHA256, MD5 checksum]
 #
-# ...or you can exchange arguments:
+#    ...or you can exchange the arguments:
 #
 # verify_checksum [SHA1, SHA256, MD5 checksum] file.tgz
 #
-# ...or you can compute the checksums of a file:
+#    ...or you can compute all the checksums of a 'file.tgz':
 #
 # verify_checksum file.tgz
 #
-# ...or you can compare two files:
+#    ...or you can compare two files:
 #
 # verify_checkusm file1.tgz file2.tgz
-#
-# (Program more or less passes "shellcheck")
 # =============================================================================
 
 set -o nounset
@@ -92,6 +108,7 @@ function one_arg_perform {
 
 function recognize_hash {
    local UHASH=$1
+   # There are at least three ways to optimize this, but why bother?
    if echo "$UHASH" | grep -q --perl-regex '^[0-9a-f]{32}$'; then
       return 1 # md5
    elif echo "$UHASH" | grep -q --perl-regex '^[0-9a-f]{40}$'; then
