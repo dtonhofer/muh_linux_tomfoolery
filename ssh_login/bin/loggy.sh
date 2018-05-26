@@ -132,6 +132,12 @@ set -o nounset
 # 2) For X11 forwarding, install "xorg-x11-xauth" on the remote machine and
 #    pass "--x11" to this script.
 #    See also: https://wiki.archlinux.org/index.php/SSH#X11_forwarding
+#
+# TODO: Option to dump the config file for convenience
+#       Option to switch user to another user (the private key file
+#       will then be found according to the overriding username)
+#       If connection does not work, try to reconnect after a suitable delay
+#       Stylishly lowercase variables!
 # =============================================================================
 
 DIR=~qq  # ~qq is actually /usr/local/toolbox
@@ -156,13 +162,13 @@ SCRIPT_TO_RUN=        # Set via "--cmd=..." (to run a script on the remote)
 TOUCH_REMOTE=         # Set via "--touch" flag
 CMDLINE_CFG=          # Set via "--cfg=..." (to set the config file instead of getting it from the $0 symlink name)
 
-# ---
+# ===
 # Write (colored) line to stderr
 # For coloring, see: 
 # http://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-echo-in-linux
-# ---
+# ===
 
-writehead() {
+writeColored() {
 
    local TEXT1
    TEXT1=$(echo ${1:-''}) # get rid of whitespace
@@ -193,9 +199,19 @@ writehead() {
    fi
 }
 
-# ---
+# ===
+# Write (red) line to stderr
+# ===
+
+writeError() {
+   tput setaf 1
+   echo "$1" >&2
+   tput sgr 0
+}
+
+# ===
 # Option processing
-# ---
+# ===
 
 processOptions() {
 
@@ -411,43 +427,10 @@ processOptions() {
    fi
 }
 
-processOptions "$@"
-
-# ---
-# If CMD not set, default to "ssh"
-# ---
-
-if [[ -z $CMD ]]; then
-   CMD=ssh
-fi
-
-# ---
-# User home directory
-# ---
-
-USER=$(whoami)
-HOMEDIR=$(getent passwd "$USER" | cut -d: -f6)
-
-if [[ ! -d $HOMEDIR ]]; then 
-   echo "The home directory '$HOMEDIR' of user '$USER' does not exist -- exiting" >&2
-   exit 1
-fi
-
-# --- 
-# Directory which contains the private keys, possibly overriden on cmdline
-# The KEYDIR may not exist ... check later when it is needed
-# --- 
-
-if [[ -n $CMDLINE_KEYDIR ]]; then
-   KEYDIR=$CMDLINE_KEYDIR
-else
-   KEYDIR=$HOMEDIR/.ssh
-fi
-
-# ---
+# ===
 # We are getting configuration from a configuration file
 # It may have been given on the command line
-# ---
+# ===
 
 lookForConfigFile() {
    local C1_LOGIND_DIR=$1
@@ -476,6 +459,10 @@ lookForConfigFile() {
    done
    echo "$CONFIG_FILE"
 }
+
+# ===
+# Decide which config file to use
+# ===
 
 whichConfigFile() {
    if [[ -n $CMDLINE_CFG ]]; then
@@ -545,6 +532,98 @@ whichConfigFile() {
    fi
 }
 
+# ===
+# DNS reverse resolution
+# ===
+
+reverseResolve() {
+   local X=$1
+   REVERSE=$(dig +short -x "$X")
+   # spacing and parentheses are included here for convenience
+   if [[ -z $REVERSE ]]; then
+      REVERSE=" (could not be reverse-resolved)"
+   else
+      REVERSE=" (reverse-resolves to '$REVERSE')"
+   fi
+   echo "$REVERSE"
+}
+
+# ===
+# DNS forward resoluion
+# ===
+
+forwardResolve() {
+   local X=$1
+   FORWARD=$(dig +short "$X")
+   # spacing and parentheses are included here for convenience
+   if [[ -z $FORWARD ]]; then
+      FORWARD=" (could not be resolved)"
+   else
+      FORWARD=" (resolves to $FORWARD)"
+   fi
+   echo "$FORWARD"
+}
+
+# ===
+# Fix Key File permissions
+# The permission of the PRIVKEY should be "rw by owner only". If this is not
+# the case, ssh will complain and exit when invoked. Let's fix it here!
+# ===
+
+fixKeyFilePermissions() {
+   local KEY=$1
+   local STAT=$(stat --format="%a" "$KEY")
+   if [[ $? != 0 ]]; then
+      echo "Could not stat private key file '$KEY' -- exiting" >&2
+      exit 1
+   fi
+   if [[ $STAT != '600' ]]; then
+      echo "Fixing permissions on private key file '$KEY'. Currently they are $STAT" >&2
+      chmod 600 "$KEY"
+      if [[ $? != 0 ]]; then
+         echo "Could not chmod private key file '$KEY' -- exiting" >&2
+         exit 1
+      fi
+   fi
+} 
+
+# ===
+# MAIN
+# ===
+
+processOptions "$@"
+
+# ---
+# If CMD not set, default to "ssh"
+# ---
+
+if [[ -z $CMD ]]; then
+   CMD=ssh
+fi
+
+# ---
+# User home directory
+# ---
+
+USER=$(whoami)
+HOMEDIR=$(getent passwd "$USER" | cut -d: -f6)
+
+if [[ ! -d $HOMEDIR ]]; then 
+   echo "The home directory '$HOMEDIR' of user '$USER' does not exist -- exiting" >&2
+   exit 1
+fi
+
+# --- 
+# Directory which contains the private keys, possibly overriden on cmdline
+# The KEYDIR may not exist ... check later when it is needed
+# --- 
+
+if [[ -n $CMDLINE_KEYDIR ]]; then
+   KEYDIR=$CMDLINE_KEYDIR
+else
+   KEYDIR=$HOMEDIR/.ssh
+fi
+
 CONFIG_FILE=$(whichConfigFile)
 
 if [[ $? != 0 ]]; then
@@ -582,7 +661,7 @@ TUNNEL=$($EE "$CONFIG_FILE" "TUNNEL")               || exit 1
 # Print colored, see: http://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-echo-in-linux
 
 if [[ -n $DESC ]]; then
-   writehead "Target description" "$DESC"
+   writeColored "Target description" "$DESC"
 fi
 
 # --- If USER is unset or the string %ACTUAL% then replace by the result of "whoami"
@@ -594,7 +673,7 @@ else
    SELUSER="Specified user '$USER'"
 fi
 
-writehead "Selected user" "$SELUSER"
+writeColored "Selected user" "$SELUSER"
 
 # --- Set the 'PORT' by checking available values
 
@@ -609,7 +688,7 @@ else
    SELPORT="no port specified (using default value 22)"
 fi
 
-writehead "Selected port" "$SELPORT"
+writeColored "Selected port" "$SELPORT"
 
 # --- Set the 'TARGET' by checking available values; take the first that applies
 
@@ -624,30 +703,6 @@ REVERSE1=
 REVERSE2=
 FORWARD1=
 FORWARD2=
-
-reverseResolve() {
-   local X=$1
-   REVERSE=$(dig +short -x "$X")
-   # spacing and parentheses are included here for convenience
-   if [[ -z $REVERSE ]]; then
-      REVERSE=" (could not not reverse-resolved)"
-   else
-      REVERSE=" (reverse-resolves to '$REVERSE')"
-   fi
-   echo "$REVERSE"
-}
-
-forwardResolve() {
-   local X=$1
-   FORWARD=$(dig +short "$X")
-   # spacing and parentheses are included here for convenience
-   if [[ -z $FORWARD ]]; then
-      FORWARD=" (could not not resolved)"
-   else
-      FORWARD=" (resolves to $FORWARD)"
-   fi
-   echo "$FORWARD"
-}
 
 if [[ -n $CMDLINE_IP ]]; then
    TARGET=$CMDLINE_IP
@@ -687,13 +742,13 @@ fi
 
 # do not include spacing or markup in the second string so that it stays empty if the values are empty!
 
-writehead "Command line host IP"   "${CMDLINE_IP}${REVERSE1}"
-writehead "Command line host name" "${CMDLINE_DNS}${FORWARD1}"
-writehead "Hardcoded host IP"      "${HARDCODED_IP}${REVERSE2}"
-writehead "Hardcoded host name"    "${HARDCODED_DNS}${FORWARD2}"
+writeColored "Command line host IP"   "${CMDLINE_IP}${REVERSE1}"
+writeColored "Command line host name" "${CMDLINE_DNS}${FORWARD1}"
+writeColored "Hardcoded host IP"      "${HARDCODED_IP}${REVERSE2}"
+writeColored "Hardcoded host name"    "${HARDCODED_DNS}${FORWARD2}"
 
 if [[ -n $SELECTED ]]; then
-   writehead "Selected target" "$SELECTED '$TARGET'"
+   writeColored "Selected target" "$SELECTED '$TARGET'"
 fi
 
 if [[ -z $TARGET ]]; then
@@ -787,11 +842,12 @@ else
          exit 1
       fi
 
-      # Maybe one should check the permissions, but "ssh" actually does that
+      fixKeyFilePermissions "$KEY"
+
       CMDARR[$I]="-i$KEY" 
       (( I++ ))
 
-   fi
+  fi
 
    CMDARR[$I]="${USER}@${TARGET}"
    (( I++ ))
@@ -806,10 +862,32 @@ fi
 
 echo "Will run this command: ${CMDARR[*]}" >&2
 
-# TODO: If connection does not work, try to reconnect after a suitable delay
-
 if [[ -z $TOUCH_REMOTE ]]; then
-   exec "${CMDARR[@]}"
+   # Run the SSH command. 
+   # Should we replace the current process using "exec" or run in subshell? Both work fine!
+   # But if we run in subshell (and wait), we can do something on return, which is better.
+   # exec "${CMDARR[@]}"
+   # To compute duration, use "SECONDS", a built-in variable
+   # https://stackoverflow.com/questions/8903239/how-to-calculate-time-difference-in-bash-script
+   SECONDS=0 
+   "${CMDARR[@]}"
+   RES=$?
+   duration=$SECONDS
+   if [[ $RES != 0 ]]; then
+      writeError "*** Some problem occurred. Return value is $RES. ***"
+      if [[ $duration -gt 100 ]]; then
+         writeError "It is now $(date)"
+      fi
+   fi
+   if [[ $duration -gt 10 ]]; then
+      txt=$(TZ=UTC0 printf '%(%H hours, %M minutes, %S seconds)T\n' "$duration")
+      txt="Connected for $txt"
+      if [[ $RES != 0 ]]; then
+         writeError "$txt"
+      else
+         echo "$txt" >&2
+      fi
+   fi
 else
    "${CMDARR[@]}" << HERE
 echo "------"
