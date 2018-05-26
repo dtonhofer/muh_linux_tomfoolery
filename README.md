@@ -10,6 +10,8 @@ Connect to a remote machine running SSH by typing the name of the machine on the
 
 This is just a simple tool to enable easier login to a given set of machines from a vanilla Linux workstation; no special SSH key management occurs; we do not even use an SSH agent.
 
+![explain how ssh_login works](https://github.com/dtonhofer/muh_linux_tomfoolery/blob/master/ssh_login/doc/explainer.png)
+
 `verify_checksum.sh`
 --------------------
 
