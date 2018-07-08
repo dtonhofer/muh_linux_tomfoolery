@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# install the symlinks for logins in user's home directory
+# =====================
+# Install the symlinks for logins in user's home directory
+# =====================
 
 DIR=~qq  # ~qq is actually /usr/local/toolbox
 
@@ -14,7 +16,9 @@ if [[ $UID == 0 ]]; then
    exit 1
 fi
 
-# Does the target exist?
+# ---
+# Does the target script (i.e. "loggy.sh" to which all the symlinks will point) exist?
+# ---
 
 TARGET=$DIR/login/bin/loggy.sh
 
@@ -23,60 +27,83 @@ if [[ ! -x $TARGET ]]; then
    exit 1
 fi
 
+# ---
 # WHERE is the directory into which we add symlinks. This
 # directory is put on the PATH by the script
 # "/etc/profile.d/toolbox.sh"
+# ---
 
-WHERE="$HOME/bin/login"
+# Candidates:
 
-if [[ ! -d "$WHERE" ]]; then
-   echo "Directory '$WHERE' (the directory holding the correctly named symlinks to '$TARGET') does not exist -- creating it!" >&2
-   mkdir -p "$WHERE" 
-   if [[ $? != 0 ]]; then
-      echo "Could not create directory '$WHERE' -- exiting!" >&2
-      exit 1
-   fi
+WHERE_C1="$HOME/bin/login"
+WHERE_C2="$HOME/.bin/login" # Preferred because not shown by default.
+
+if [[ -d "$WHERE_C2" ]]; then
+   WHERE="$WHERE_C2"
+elif [[ -d "$WHERE_C1" ]]; then
+   WHERE="$WHERE_C1"
+else
+   echo "Neither directory '$WHERE_C1' nor directory '$WHERE_C2' (the directory" >&2
+   echo "holding the correctly named symlinks to '$TARGET') exist -- please" >&2
+   echo "create either one and put it on the PATH!" >&2
+   echo "Exiting!" >&2
+   exit 1
 fi
 
 cd "$WHERE" || exit 1
 
-# FROM is the directory holding the login configuration files
+# ---
+# LOGIND is the directory holding the user-local login configuration files which have
+# been copied at some time from ~qq/login/config/$(hostname)
+# ---
 
-FROM="$HOME/.ssh/login.d"
+LOGIND="$HOME/.ssh/login.d"
 
-if [[ ! -d "$FROM" ]]; then
-   echo "Directory '$FROM' (holding the login configuration files) does not exist -- exiting!" >&2
+if [[ ! -d "$LOGIND" ]]; then
+   echo "Directory '$LOGIND' (holding the login configuration files) does not exist -- exiting!" >&2
    exit 1
 fi
 
-# Get all the machines, one per configuration files
+# ---
+# The user may have asked for refresh
+# ---
+
+if [[ -n $REFRESH ]]; then
+   LOGIND_SRC=~qq/login/config/$(hostname)
+   if [[ ! -d $LOGIND_SRC ]]; then
+      echo "Cannot refresh as the source directory '$LOGIND_SRC' does not exist -- exiting!" >&2
+      exit 1
+   fi
+fi
+
+# ---
+# TODO: Handle an option --refresh, which creates this directory and fills it with the
+# config files found in ~qq/login/config/$(hostname) and deletes any superfluous files
+# ---
+
+# ---
+# Get all the "machines" in an array - one per configuration file in $LOGIND
+# ---
 
 MACHINES=()
 
 while IFS= read -d $'\0' -r MACHINE; do
    MACHINE=$(basename $MACHINE)
    MACHINES+=("$MACHINE")
-done < <(find "$FROM" -maxdepth 1 -type f -print0)
+done < <(find "$LOGIND" -maxdepth 1 -type f -print0)
 
-# Loop over the configuration files
+# ---
+# For each configuration file, create a symlink!
+# ---
 
 for MACHINE in "${MACHINES[@]}"; do
-   echo "Handling machine '$MACHINE'..."
-   CONFIGFILE="$FROM/$MACHINE"
-   if [[ ! -f $CONFIGFILE ]]; then
-      echo "The configuration file '$CONFIGFILE' does not exist -- skipping creation of symlink '$MACHINE'" >&2
-      FOUND=$(find "$DIR/login/config" -name "$MACHINE")
-      if [[ -n $FOUND ]]; then
-         echo "There are configuration files in $DIR: $FOUND -- you may want to copy them!" >&2
-      fi
+   if [[ -s "$MACHINE" ]]; then
+      echo "Symlink '$MACHINE' exists -- skipping!" >&2
    else
-      if [[ -s "$MACHINE" ]]; then
-         echo "Symlink '$MACHINE' exists -- skipping!" >&2
-      else
-         ln -s "$TARGET" "$MACHINE"
-         if [[ $? != 0 ]]; then
-            echo "Could not create symlink '$MACHINE' --> '$TARGET'" >&2
-         fi
+      echo "*** Symlink '$MACHINE' does not exist -- creating! ***" >&2
+      ln -s "$TARGET" "$MACHINE"
+      if [[ $? != 0 ]]; then
+         echo "Could not create symlink '$MACHINE' --> '$TARGET'" >&2
       fi
    fi
 done

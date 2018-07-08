@@ -6,7 +6,6 @@ set -o nounset
 # =============================================================================
 # Author:   David Tonhofer
 # Rights:   Public Domain
-#
 # -----------------------------------------------------------------------------
 # Connect to a remote machine running SSH by typing the name of the machine 
 # on the command line. Because I can't be bothered to remember the command
@@ -19,20 +18,29 @@ set -o nounset
 #
 # Options:
 # 
-# --cfg=<path-to-file>  to explicity give the config file for the remote
-# --ip=<ipaddr>         to set/override IP address from config file
-# --dns=<hostname>      to set/override hostname from config file
-# --port=<int>          to set/override TCP port from config file
-# --x11                 to switch on X11 forwarding
+# --cfg=[path-to-file]  to explicity give the config file for the remote machine
+#
+# --ip=[ipaddr]         to set/override IP address from the config file
+# --dns=[hostname]      to set/override hostname from the config file
+#                      (both can be given, but IP overrides DNS)
+#
+# --port=[int]          to set/override TCP port from the config file
+# --keydir=[dir]        to override the private-SSH-key directory /root/.ssh
+#
+# --ssh                 to explicitly use SSH client (this is the default)
+# --sftp|--ftp          to explicitly use SSH client in SFTP mode instead
+# --http                to use Firefox to access an http:// URL instead
+# --https               to use Firefox to access an https:// URL instead
+#
+# --x11                 to switch on X11 forwarding of the SSH protocol
 # --verbose|-v          to make SSH client be verbose
-# --ssh|ssh             to explicitly use SSH client (this is the default)
-# --sftp|--ftp|sftp|ftp to explicitly use SSH client in SFTP mode
-# --http|http           to use Firefox to access an http:// URL
-# --https|https         to use Firefox to access an https:// URL
-# --keydir=<dir>        to override the private-SSH-key directory
-# --cmd=<string>        to execute a command on the remote
-# --touch               to run simple information dumping shell commands on 
-#                       the remote
+#
+# --proxyport=[port]    to set up a SOCKS proxy locally on the given port (implies --ssh)
+# --proxybind=[any|...] to bind the SOCKS proxy to an address (by default, localhost) (implies --ssh)
+#
+# --cmd=[string]        to execute a command on the remote machine (implies --ssh)
+# --touch               to run infodump shell commands on the remote machine (implies --ssh)
+#
 # How to set it up:
 # 
 # 1) Store this script in secure place, e.g. 
@@ -43,7 +51,7 @@ set -o nounset
 # 
 #    The script assumes a default naming convention for the private key, which
 #    is: 
-
+#
 #    REMOTE_USER@(REMOTE_MACHINE).privkey            for unencrypted priv key
 #    REMOTE_USER@(REMOTE_MACHINE).privkey.crypted    for encrypted priv key
 # 
@@ -80,13 +88,13 @@ set -o nounset
 #
 #    ------
 #    DESC          = Cloud machine AWS Ireland (RHEL 7)
-#    HARDCODED_DNS = %THIS%.example.com
-#    # HARDCODED_IP  = XX.XX.XX.XX
+#    hardcoded_dns = %THIS%.example.com
+#    # hardcoded_ip  = XX.XX.XX.XX
 #    USER          = fedora
-#    PRIVKEY       = %USER%@(%THIS%.example.com).privkey
+#    privkey       = %USER%@(%THIS%.example.com).privkey
 #    # PORT        = 22
 #    # TUNNEL      = ....
-#    # USE_NOSTRICT = YES
+#    # use_nostrict = YES
 #    ------
 #    
 #    - A line starting with "#" is a comment
@@ -97,12 +105,12 @@ set -o nounset
 #      ...useful if you copy the same config to several others that only 
 #      differ by name, PORT may be specified if SSH server runs on nonstandard
 #      port.
-#    - PRIVKEY gives the name of the private key file in ~/.ssh
+#    - privkey gives the name of the private key file in ~/.ssh
 #      ...%THIS works similar to DNS. Additionally %USER% takes the value of 
 #      USER. 
 #    - TUNNEL takes an argument that is passed to ssh "-L" option (see the
 #      manpage of ssh)
-#    - USE_NOSTRICT switches off strict host key checking
+#    - use_nostrict switches off strict host key checking
 #
 # 4) In a directory that is on your search path (e.g. "~/bin/login"), create a
 #    symlink using "ln -s"
@@ -133,17 +141,18 @@ set -o nounset
 #    pass "--x11" to this script.
 #    See also: https://wiki.archlinux.org/index.php/SSH#X11_forwarding
 #
-# TODO: Option to dump the config file for convenience
-#       Option to switch user to another user (the private key file
-#       will then be found according to the overriding username)
-#       If connection does not work, try to reconnect after a suitable delay
-#       Stylishly lowercase variables!
+# TODO: - Option to dump the config file for convenience
+#       - Option to switch user to another user (the private key file
+#         will then be found according to the overriding username)
+#       - If connection does not work, try to reconnect after a suitable delay
+#       - ConnectTimeout should be overridable
+#       - Be able to configure a proxy on the remote
 # =============================================================================
 
-DIR=~qq  # ~qq is actually /usr/local/toolbox
+dir=~qq  # ~qq is actually /usr/local/toolbox
 
-if [[ ! -d $DIR ]]; then
-   echo "There is no directory '$DIR'. Fix the script! Exiting!" >&2
+if [[ ! -d $dir ]]; then
+   echo "There is no directory '$dir'. Fix the script! Exiting!" >&2
    exit 1
 fi
 
@@ -151,16 +160,19 @@ fi
 # Some variables set by option processing
 # ---
 
-USE_X11_FWD=          # Set via "--x11" flag
-USE_VERBOSE=          # Set via "-v" or "--verbose" flag
-CMDLINE_KEYDIR=       # Set via "--keydir=..."
-CMDLINE_IP=           # Set via "--ip=..."
-CMDLINE_DNS=          # Set via "--dns=..."
-CMDLINE_PORT=         # Set via "--port=..."
-CMD=                  # By default "ssh" otherwise set via "--ssh"/"--sftp"/"--http"/"--touch" flags
-SCRIPT_TO_RUN=        # Set via "--cmd=..." (to run a script on the remote)
-TOUCH_REMOTE=         # Set via "--touch" flag
-CMDLINE_CFG=          # Set via "--cfg=..." (to set the config file instead of getting it from the $0 symlink name)
+use_x11_fwd=          # Set via "--x11" flag
+use_verbose=          # Set via "-v" or "--verbose" flag
+cmdline_keydir=       # Set via "--keydir=..."
+cmdline_ip=           # Set via "--ip=..."
+cmdline_dns=          # Set via "--dns=..."
+cmdline_port=         # Set via "--port=..."
+cmdline_proxybind=    # Set via "--proxybind=..."
+cmdline_proxyport=    # Set via "--proxyport=..."
+mode=ssh              # By default "ssh" otherwise set via "--ssh"/"--sftp"/"--http"/"--touch" flags
+mode_lock=            # Once set, "mode" cannot be changed anymore; if it is "FAIL", then there is mode confusion
+script_to_run=        # Set via "--cmd=..." (to run a script on the remote)
+touch_remote=         # Set via "--touch" flag
+cmdline_cfg=          # Set via "--cfg=..." (to set the config file instead of getting it from the $0 symlink name)
 
 # ===
 # Write (colored) line to stderr
@@ -170,32 +182,32 @@ CMDLINE_CFG=          # Set via "--cfg=..." (to set the config file instead of g
 
 writeColored() {
 
-   local TEXT1
-   TEXT1=$(echo ${1:-''}) # get rid of whitespace
+   local text1
+   text1=$(echo ${1:-''}) # get rid of whitespace
 
-   local TEXT2
-   TEXT2=$(echo ${2:-''}) # get rid of whitespace
+   local text2
+   text2=$(echo ${2:-''}) # get rid of whitespace
 
-   local MIS
-   (( MIS=40-${#TEXT1} ))
+   local mis
+   (( mis=40-${#text1} ))
 
    tput setaf 3
 
-   echo -n "$TEXT1" >&2
-   while [[ $MIS -gt 0 ]]; do
+   echo -n "$text1" >&2
+   while [[ $mis -gt 0 ]]; do
       echo -n " " >&2
-      (( MIS-- ))
+      (( mis-- ))
    done
    echo -n ": " >&2
 
    tput sgr 0
 
-   if [[ $TEXT1 == "Target description" ]]; then
+   if [[ $text1 == "Target description" ]]; then
       tput setaf 6
-      echo "$TEXT2" >&2
+      echo "$text2" >&2
       tput sgr 0
    else
-      echo "$TEXT2" >&2
+      echo "$text2" >&2
    fi
 }
 
@@ -210,6 +222,25 @@ writeError() {
 }
 
 # ===
+# Change the mode. Sets returnvalue to 1 on problem.
+# ===
+
+changeMode() {
+   local from_mode=$1
+   local to_mode=$2
+   local param=$3
+   if [[ $from_mode != "$to_mode" ]]; then
+      if [[ -n $mode_lock ]]; then
+         echo "Mode was already immutably set to '$from_mode' but encountered option '$param' -- can't do that!" >&2
+         mode_lock=FAIL
+      else
+         mode="$to_mode"
+         mode_lock=Y
+      fi   
+   fi
+}
+
+# ===
 # Option processing
 # ===
 
@@ -220,209 +251,254 @@ processOptions() {
    # In that case, the string on the right MUST NOT be enclosed in single or double quotes,
    # otherwise it becomes a literal string
 
-   local USE_IP=
-   local USE_DNS=
-   local USE_CMDLINE_KEYDIR=
-   local USE_CMDLINE_CFG=
-   local USE_SCRIPT_TO_RUN=
-   local USE_PORT=
-   local PARAM=
-   local UNKNOWN=
-   local PRINT_HELP=
+   local use_ip=
+   local use_dns=
+   local use_cmdline_keydir=
+   local use_cmdline_cfg=
+   local use_script_to_run=
+   local use_port=
+   local use_proxyport=
+   local use_proxybind=
 
-   for PARAM in "$@"; do   
+   local param=
+   local unknown=
+   local print_help=
+   local old_mode=
 
-      # Process arguments that are separate from their option
-      # Note that an argument that demands a followup argument does nto generate an error if it 
-      # is the las in the line
+   for param in "$@"; do   
+
+      # Process args that are separate from their option.
+      # i.e. "--target X" instead of "--target=X"
+      # Note that an option that demands an arg does not generate an error if it 
+      # is the last one on the command line; this should maybe be fixed...
      
-      if [[ -n $USE_CMDLINE_KEYDIR ]]; then
-         CMDLINE_KEYDIR=$PARAM
-         USE_CMDLINE_KEYDIR=""
+      if [[ -n $use_cmdline_keydir ]]; then
+         cmdline_keydir=$param
+         use_cmdline_keydir=""
          continue
       fi
 
-      if [[ -n $USE_IP ]]; then
-         CMDLINE_IP=$PARAM
-         USE_IP=""
+      if [[ -n $use_ip ]]; then
+         cmdline_ip=$param
+         use_ip=""
          continue
       fi
 
-      if [[ -n $USE_DNS ]]; then
-         CMDLINE_DNS=$PARAM
-         USE_DNS=""
+      if [[ -n $use_dns ]]; then
+         cmdline_dns=$param
+         use_dns=""
          continue
       fi
 
-      if [[ -n $USE_SCRIPT_TO_RUN ]]; then
-         SCRIPT_TO_RUN=$PARAM
-         USE_SCRIPT_TO_RUN=""
+      if [[ -n $use_script_to_run ]]; then
+         script_to_run=$param
+         use_script_to_run=""
          continue
       fi
 
-      if [[ -n $USE_CMDLINE_CFG ]]; then
-         CMDLINE_CFG=$PARAM
-         USE_CMDLINE_CFG=""
+      if [[ -n $use_cmdline_cfg ]]; then
+         cmdline_cfg=$param
+         use_cmdline_cfg=""
          continue
       fi
 
-      if [[ -n $USE_PORT ]]; then
-         CMDLINE_PORT=$PARAM
-         USE_PORT=""
+      if [[ -n $use_port ]]; then
+         cmdline_port=$param
+         use_port=""
          continue
       fi
 
-      # Process option
-
-      if [[ $PARAM == '--ssh' ]]; then
-         if [[ -n $CMD ]]; then
-            echo "Command was already set to '$CMD' but encountered option '$PARAM' -- setting again!" >&2
-         fi
-         CMD=ssh
+      if [[ -n $use_proxyport ]]; then
+         cmdline_proxyport=$param
+         use_proxyport=""
          continue
       fi
 
-      if [[ $PARAM == '--sftp' || $PARAM == '--ftp' || $PARAM == 'sftp' || $PARAM == 'ftp' ]]; then
-         if [[ -n $CMD ]]; then
-            echo "Command was already set to '$CMD' but encountered option '$PARAM' -- setting again!" >&2
-         fi
-         CMD=sftp
+      if [[ -n $use_proxybind ]]; then
+         cmdline_proxybind=$param
+         use_proxybind=""
          continue
       fi
 
-      if [[ $PARAM == '--http' || $PARAM == 'http' ]]; then
-         if [[ -n $CMD ]]; then
-            echo "Command was already set to '$CMD' but encountered option '$PARAM' -- setting again!" >&2
-         fi
-         CMD=http
+      # Process flags, i.e. "--option" elements
+
+      if [[ $param == '--ssh' ]]; then
+         old_mode="$mode"; mode=ssh; changeMode "$old_mode" "$mode" "$param"
          continue
       fi
 
-      if [[ $PARAM == '--https' || $PARAM == 'https' ]]; then
-         if [[ -n $CMD ]]; then
-            echo "Command was already set to '$CMD' but encountered option '$PARAM' -- setting again!" >&2
-         fi
-         CMD=https
+      if [[ $param =~ ^--s?ftp$ ]]; then
+         old_mode="$mode"; mode=sftp; changeMode "$old_mode" "$mode" "$param"
          continue
       fi
 
-      if [[ $PARAM == '--touch' ]]; then
-         if [[ -n $CMD ]]; then
-            echo "Command was already set to '$CMD' but encountered option '$PARAM' --setting again!" >&2
-         fi
-         CMD=ssh # implies SSH connection
-         TOUCH_REMOTE=Y
+      if [[ $param == '--http' ]]; then
+         old_mode="$mode"; mode=http; changeMode "$old_mode" "$mode" "$param"
          continue
       fi
 
-      if [[ $PARAM =~ --ip(=.+)? ]]; then
-         if [[ $PARAM =~ --ip=(.+)? ]]; then
-            CMDLINE_IP=$(echo "$PARAM" | cut --delimiter="=" --fields=2)
+      if [[ $param == '--https' ]]; then
+         old_mode="$mode"; mode=https; changeMode "$old_mode" "$mode" "$param"
+         continue
+      fi
+
+      if [[ $param == '--touch' ]]; then
+         old_mode="$mode"; mode=ssh; changeMode "$old_mode" "$mode" "$param"
+         touch_remote=Y
+         continue
+      fi
+
+      if [[ $param == '--x11' ]]; then
+         use_x11_fwd=1
+         continue
+      fi
+
+      if [[ $param == '--verbose' || $param == '-v' ]]; then
+         use_verbose=1
+         continue
+      fi
+
+      # Process "--option=arg" elements, but also cater for "--option arg" style
+
+      if [[ $param =~ ^--ip(=.+)? ]]; then
+         if [[ $param =~ ^--ip=(.+)? ]]; then
+            cmdline_ip=$(echo "$param" | cut --delimiter="=" --fields=2)
          else 
-            USE_IP=1
+            use_ip=1
          fi
          continue
       fi
 
-      if [[ $PARAM =~ --port(=.+)? ]]; then
-         if [[ $PARAM =~ --port=(.+)? ]]; then
-            CMDLINE_PORT=$(echo "$PARAM" | cut --delimiter="=" --fields=2)
+      if [[ $param =~ ^--port(=.+)? ]]; then
+         if [[ $param =~ ^--port=(.+)? ]]; then
+            cmdline_port=$(echo "$param" | cut --delimiter="=" --fields=2)
          else 
-            USE_PORT=1
+            use_port=1
          fi
          continue
       fi
 
-      if [[ $PARAM =~ --dns(=.+)? ]]; then
-         if [[ $PARAM =~ --dns=(.+)? ]]; then
-            CMDLINE_DNS=$(echo "$PARAM" | cut --delimiter="=" --fields=2)
+      if [[ $param =~ ^--proxyport(=.+)? ]]; then
+         if [[ $param =~ ^--proxyport=(.+)? ]]; then
+            cmdline_proxyport=$(echo "$param" | cut --delimiter="=" --fields=2)
+         else 
+            use_proxyport=1
+         fi
+         old_mode="$mode"; mode=ssh; changeMode "$old_mode" "$mode" "$param"
+         continue
+      fi
+
+      if [[ $param =~ ^--proxybind(=.+)? ]]; then
+         if [[ $param =~ ^--proxybind=(.+)? ]]; then
+            cmdline_proxybind=$(echo "$param" | cut --delimiter="=" --fields=2)
+         else 
+            use_proxybind=1
+         fi
+         old_mode="$mode"; mode=ssh; changeMode "$old_mode" "$mode" "$param"
+         continue
+      fi
+
+      if [[ $param =~ ^--dns(=.+)? ]]; then
+         if [[ $param =~ ^--dns=(.+)? ]]; then
+            cmdline_dns=$(echo "$param" | cut --delimiter="=" --fields=2)
          else
-            USE_DNS=1
+            use_dns=1
          fi
          continue
       fi
 
-      if [[ $PARAM =~ --cmd(=.+)? ]]; then
-         if [[ -n $CMD ]]; then
-            echo "Command was already set to '$CMD' but encountered option '$PARAM' --setting again!" >&2
-         fi
-         CMD=ssh # implies SSH connection
-         if [[ $PARAM =~ --cmd=(.+)? ]]; then
-            SCRIPT_TO_RUN=$(echo "$PARAM" | cut --delimiter="=" --fields=2)
+      if [[ $param =~ ^--cmd(=.+)? ]]; then
+         if [[ $param =~ --cmd=(.+)? ]]; then
+            script_to_run=$(echo "$param" | cut --delimiter="=" --fields=2)
          else
-            USE_SCRIPT_TO_RUN=1
+            use_script_to_run=1
          fi
+         old_mode="$mode"; mode=ssh; changeMode "$old_mode" "$mode" "$param"
          continue
       fi
 
-      if [[ $PARAM =~ --cfg(=.+)? ]]; then
-         if [[ $PARAM =~ --cfg=(.+)? ]]; then
-            CMDLINE_CFG=$(echo "$PARAM" | cut --delimiter="=" --fields=2)
+      if [[ $param =~ ^--cfg(=.+)? ]]; then
+         if [[ $param =~ ^--cfg=(.+)? ]]; then
+            cmdline_cfg=$(echo "$param" | cut --delimiter="=" --fields=2)
          else
-            USE_CMDLINE_CFG=1
+            use_cmdline_cfg=1
          fi
          continue
       fi
 
-      if [[ $PARAM =~ --keydir(=.+)? ]]; then
-         if [[ $PARAM =~ --keydir=(.+)? ]]; then
-            CMDLINE_KEYDIR=$(echo "$PARAM" | cut --delimiter="=" --fields=2)
+      if [[ $param =~ ^--keydir(=.+)? ]]; then
+         if [[ $param =~ ^--keydir=(.+)? ]]; then
+            cmdline_keydir=$(echo "$param" | cut --delimiter="=" --fields=2)
          else
-            USE_CMDLINE_KEYDIR=1
+            use_cmdline_keydir=1
          fi
          continue
       fi
 
-      if [[ $PARAM == '--x11' ]]; then
-         USE_X11_FWD=1
-         continue
-      fi
+      # Special case: "--help" or "-h"
 
-      if [[ $PARAM == '--help' || $PARAM == '-h' ]]; then
-         PRINT_HELP=1
+      if [[ $param == '--help' || $param == '-h' ]]; then
+         print_help=1
          break
       fi
 
-      if [[ $PARAM == '--verbose' || $PARAM == '-v' ]]; then
-         USE_VERBOSE=1
-         continue
+      # if we are here, we encountered something unknown in "param";
+      # if "unknown" is already set, add a comma for separation
+
+      if [[ -n $unknown ]]; then
+         unknown="$unknown,"
       fi
 
-      # if we are here, we encountered something unknown in PARAM
-      # if UNKNOWN is already set, add a comma for separation
-
-      if [[ -n $UNKNOWN ]]; then
-         UNKNOWN="$UNKNOWN,"
-      fi
-
-      UNKNOWN="${UNKNOWN}${PARAM}"
+      unknown="${unknown}${param}"
 
    done
 
-   if [[ -n $UNKNOWN ]]; then
-      echo "Unknown parameters '$UNKNOWN'" >&2
-      PRINT_HELP=1
+   if [[ -n $unknown ]]; then
+      echo "Unknown parameters '$unknown'" >&2
+      print_help=1
    fi
 
-   if [[ -n $PRINT_HELP ]]; then
-      echo "--cfg=<path-to-file>  to explicity give the config file for the remote" >&2
-      echo "--ip=<ipaddr>         to set/override IP address from config file" >&2
-      echo "--dns=<hostname>      to set/override hostname from config file" >&2
-      echo "--port=<int>          to set/override TCP port from config file" >&2
-      echo "--x11                 to switch on X11 forwarding" >&2
-      echo "--verbose|-v          to make SSH client be verbose" >&2
-      echo "--ssh|ssh             to explicitly use SSH client (this is the default)" >&2
-      echo "--sftp|--ftp|sftp|ftp to explicitly use SSH client in SFTP mode" >&2
-      echo "--http|http           to use Firefox to access an http:// URL" >&2
-      echo "--https|https         to use Firefox to access an https:// URL" >&2
-      echo "--keydir=<dir>        to override the private-SSH-key directory $HOME/.ssh" >&2
-      echo "--cmd=<string>        to execute a command on the remote" >&2
-      echo "--touch               to run simple information dumping shell commands on the remote" >&2
+   if [[ -n $print_help ]]; then
+cat >&2 <<HERE
+--cfg=[path-to-file]  to explicity give the config file for the remote machine
+
+--ip=[ipaddr]         to set/override IP address from the config file
+--dns=[hostname]      to set/override hostname from the config file
+                      (both can be given, but IP overrides DNS)
+
+--port=[int]          to set/override TCP port from the config file
+--keydir=[dir]        to override the private-SSH-key directory $HOME/.ssh
+
+--ssh                 to explicitly use SSH client (this is the default)
+--sftp|--ftp          to explicitly use SSH client in SFTP mode instead
+--http                to use Firefox to access an http:// URL instead
+--https               to use Firefox to access an https:// URL instead
+
+--x11                 to switch on X11 forwarding of the SSH protocol
+--verbose|-v          to make SSH client be verbose
+
+--proxyport=[port]    to set up a SOCKS proxy locally on the given port (implies --ssh)
+--proxybind=[any|...] to bind the SOCKS proxy to an address (by default, localhost) (implies --ssh)
+
+--cmd=[string]        to execute a command on the remote machine (implies --ssh)
+--touch               to run infodump shell commands on the remote machine (implies --ssh)
+HERE
       exit 1
    fi
  
-   if [[ -n $USE_IP && -n $USE_DNS ]]; then
-      echo "Both '--ip=...' and '--dns=...' specified: use only one of those" >&2
+   if [[ -n $use_ip && -n $use_dns ]]; then
+      echo "Both '--ip=...' and '--dns=...' specified: use only one of those -- exiting" >&2
+      exit 1
+   fi
+
+   if [[ -n $cmdline_proxybind && -z $cmdline_proxyport ]]; then
+      echo "Proxy bind is '$cmdline_proxybind' but proxy port is unset -- this makes no sense -- exiting" >&2
+      exit 1
+   fi
+
+
+   if [[ $mode_lock == FAIL ]]; then
+      echo "Unclear what mode to use -- exiting" >&2
       exit 1
    fi
 }
@@ -433,31 +509,31 @@ processOptions() {
 # ===
 
 lookForConfigFile() {
-   local C1_LOGIND_DIR=$1
-   local C2_LOGIND_DIR=$2
-   local REQUEST1=$3
-   local REQUEST2=$4
-   local CANDIDATE=
-   local COUNT=
-   local CONFIG_FILE=
-   for CANDIDATE in "$C1_LOGIND_DIR" "$C2_LOGIND_DIR"; do
-      if [[ -d $CANDIDATE ]]; then
-         # Recursively search underneath $CANDIDATE so that the user may organize this at will
-         COUNT=$(find "$CANDIDATE" '(' -name "$REQUEST1" -o -name "$REQUEST2" ')' -type f | wc -l)
-         if [[ $COUNT -gt 1 ]]; then
-            echo "The directory '$CANDIDATE' contains $COUNT config files named '$REQUEST1' or '$REQUEST2'" >&2
+   local c1_logind_dir=$1
+   local c2_logind_dir=$2
+   local request1=$3
+   local request2=$4
+   local candidate=
+   local count=
+   local config_file=
+   for candidate in "$c1_logind_dir" "$c2_logind_dir"; do
+      if [[ -d $candidate ]]; then
+         # Recursively search underneath $candidate so that the user may organize this at will
+         count=$(find "$candidate" '(' -name "$request1" -o -name "$request2" ')' -type f | wc -l)
+         if [[ $count -gt 1 ]]; then
+            echo "The directory '$candidate' contains $count config files named '$request1' or '$request2'" >&2
             echo "Unsure how to connect -- exiting" >&2
             # TODO: Take the longest one first
             # TODO: This exit doesn't work as the function is executed in a subshell
             exit 1
          fi
-         if [[ $COUNT -eq 1 ]]; then
-            CONFIG_FILE=$(find "$CANDIDATE" '(' -name "$REQUEST1" -o -name "$REQUEST2" ')' -type f)
+         if [[ $count -eq 1 ]]; then
+            config_file=$(find "$candidate" '(' -name "$request1" -o -name "$request2" ')' -type f)
             break
          fi
       fi
    done
-   echo "$CONFIG_FILE"
+   echo "$config_file"
 }
 
 # ===
@@ -465,12 +541,12 @@ lookForConfigFile() {
 # ===
 
 whichConfigFile() {
-   if [[ -n $CMDLINE_CFG ]]; then
-      if [[ ! -f "$CMDLINE_CFG" ]]; then
-         echo "Cannot find configuration file given on the command line '$CMDLINE_CFG' (give full path!)" >&2
+   if [[ -n $cmdline_cfg ]]; then
+      if [[ ! -f "$cmdline_cfg" ]]; then
+         echo "Cannot find configuration file given on the command line '$cmdline_cfg' (give full path!)" >&2
          echo "" # returned config file
       else
-         echo "$CMDLINE_CFG" # returned config file
+         echo "$cmdline_cfg" # returned config file
       fi
    else
       #
@@ -487,47 +563,47 @@ whichConfigFile() {
       # 1) foobar.example.com_best
       # 2) foobar.example.com
       #
-      local REQUEST1=$(basename "$0")   # possibly the name of the script
-      local REQUEST2="${REQUEST1%%_*}"  # possibly with everyting after "_" removed
+      local request1; request1=$(basename "$0")   # possibly the name of the script
+      local request2="${request1%%_*}"  # possibly with everyting after "_" removed
       #
       # Primary directory with login configuration files (searched first)
       #   
-      local LOGIND="login.d"
+      local logind="login.d"
       #
       # First choice is underneath user's .ssh directory
       #
-      local C1_LOGIND_DIR="$HOMEDIR/.ssh/$LOGIND"
+      local c1_logind_dir="$homedir/.ssh/$logind"
       #
-      # Second choice is underneath the KEYDIR (given on the command line or the default one)
+      # Second choice is underneath the keydir (given on the command line or the default one)
       # (it may well the same as above)
       #
-      local C2_LOGIND_DIR="$KEYDIR/$LOGIND"  
-      if [[ $C2_LOGIND_DIR == $C1_LOGIND_DIR ]]; then
-         C2_LOGIND_DIR=
+      local c2_logind_dir="$keydir/$logind"  
+      if [[ $c2_logind_dir == "$c1_logind_dir" ]]; then
+         c2_logind_dir=
       fi
       #
       # Determine how to connect by name of command ---
       #
-      if [[ ! -d "$C1_LOGIND_DIR" && ! -d "$C2_LOGIND_DIR" ]]; then
+      if [[ ! -d "$c1_logind_dir" && ! -d "$c2_logind_dir" ]]; then
          echo "None of the directories" >&2
-         echo "   $C1_LOGIND_DIR" >&2
-         [[ -n $C2_LOGIND_DIR ]] && echo "   $C2_LOGIND_DIR" >&2
+         echo "   $c1_logind_dir" >&2
+         [[ -n $c2_logind_dir ]] && echo "   $c2_logind_dir" >&2
          echo "exists." >&2
          return 1
       fi
-      local CONFIG_FILE=$(lookForConfigFile "$C1_LOGIND_DIR" "$C2_LOGIND_DIR" "$REQUEST1" "$REQUEST2")
-      if [[ -z $CONFIG_FILE ]]; then
+      local config_file; config_file=$(lookForConfigFile "$c1_logind_dir" "$c2_logind_dir" "$request1" "$request2")
+      if [[ -z $config_file ]]; then
          echo "None of the directories" >&2
-         echo "   $C1_LOGIND_DIR" >&2
-         [[ -n $C2_LOGIND_DIR ]] && echo "   $C2_LOGIND_DIR" >&2
-         echo -n "contains a file named '$REQUEST1'" >&2
-         if [[ $REQUEST1 != $REQUEST2 ]]; then
-             echo "or '$REQUEST2'." >&2
+         echo "   $c1_logind_dir" >&2
+         [[ -n $c2_logind_dir ]] && echo "   $c2_logind_dir" >&2
+         echo -n "contains a file named '$request1'" >&2
+         if [[ $request1 != "$request2" ]]; then
+             echo "or '$request2'." >&2
          fi
          echo >&2        
          return 1
       fi
-      echo "$CONFIG_FILE" # successfully returned config file
+      echo "$config_file" # successfully returned config file
       return 0
    fi
 }
@@ -537,15 +613,15 @@ whichConfigFile() {
 # ===
 
 reverseResolve() {
-   local X=$1
-   REVERSE=$(dig +short -x "$X")
+   local ipaddr=$1
+   rev=$(dig +short -x "$ipaddr")
    # spacing and parentheses are included here for convenience
-   if [[ -z $REVERSE ]]; then
-      REVERSE=" (could not be reverse-resolved)"
+   if [[ -z $rev ]]; then
+      rev=" (could not be reverse-resolved)"
    else
-      REVERSE=" (reverse-resolves to '$REVERSE')"
+      rev=" (reverse-resolves to '$rev')"
    fi
-   echo "$REVERSE"
+   echo "$rev"
 }
 
 # ===
@@ -553,35 +629,34 @@ reverseResolve() {
 # ===
 
 forwardResolve() {
-   local X=$1
-   FORWARD=$(dig +short "$X")
+   local name=$1
+   fwd=$(dig +short "$name")
    # spacing and parentheses are included here for convenience
-   if [[ -z $FORWARD ]]; then
-      FORWARD=" (could not be resolved)"
+   if [[ -z $fwd ]]; then
+      fwd=" (could not be resolved)"
    else
-      FORWARD=" (resolves to $FORWARD)"
+      fwd=" (resolves to $fwd)"
    fi
-   echo "$FORWARD"
+   echo "$fwd"
 }
 
 # ===
 # Fix Key File permissions
-# The permission of the PRIVKEY should be "rw by owner only". If this is not
+# The permission of the privkey should be "rw by owner only". If this is not
 # the case, ssh will complain and exit when invoked. Let's fix it here!
 # ===
 
 fixKeyFilePermissions() {
-   local KEY=$1
-   local STAT=$(stat --format="%a" "$KEY")
-   if [[ $? != 0 ]]; then
-      echo "Could not stat private key file '$KEY' -- exiting" >&2
+   local key=$1
+   local stat;
+   if ! stat=$(stat --format="%a" "$key") ; then
+      echo "Could not stat private key file '$key' -- exiting" >&2
       exit 1
    fi
-   if [[ $STAT != '600' ]]; then
-      echo "Fixing permissions on private key file '$KEY'. Currently they are $STAT" >&2
-      chmod 600 "$KEY"
-      if [[ $? != 0 ]]; then
-         echo "Could not chmod private key file '$KEY' -- exiting" >&2
+   if [[ $stat != '600' ]]; then
+      echo "Fixing permissions on private key file '$key'. Currently they are $stat" >&2
+      if ! chmod 600 "$key" ; then
+         echo "Could not chmod private key file '$key' -- exiting" >&2
          exit 1
       fi
    fi
@@ -617,247 +692,262 @@ textifyDuration() {
 processOptions "$@"
 
 # ---
-# If CMD not set, default to "ssh"
-# ---
-
-if [[ -z $CMD ]]; then
-   CMD=ssh
-fi
-
-# ---
 # User home directory
 # ---
 
-USER=$(whoami)
-HOMEDIR=$(getent passwd "$USER" | cut -d: -f6)
+user=$(whoami)
+homedir=$(getent passwd "$user" | cut -d: -f6)
 
-if [[ ! -d $HOMEDIR ]]; then 
-   echo "The home directory '$HOMEDIR' of user '$USER' does not exist -- exiting" >&2
+if [[ ! -d $homedir ]]; then 
+   echo "The home directory '$homedir' of user '$user' does not exist -- exiting" >&2
    exit 1
 fi
 
 # --- 
 # Directory which contains the private keys, possibly overriden on cmdline
-# The KEYDIR may not exist ... check later when it is needed
+# The keydir may not exist ... check later when it is needed
 # --- 
 
-if [[ -n $CMDLINE_KEYDIR ]]; then
-   KEYDIR=$CMDLINE_KEYDIR
+if [[ -n $cmdline_keydir ]]; then
+   keydir=$cmdline_keydir
 else
-   KEYDIR=$HOMEDIR/.ssh
+   keydir=$homedir/.ssh
 fi
 
-CONFIG_FILE=$(whichConfigFile)
-
-if [[ $? != 0 ]]; then
+if ! config_file=$(whichConfigFile) ; then
    echo "Cannot find out how to connect to anything due to missing config file -- exiting" >&2
    exit 1
 else
-   echo "Using configuration file '$CONFIG_FILE'" >&2
+   echo "Using configuration file '$config_file'" >&2
 fi
 
-# Reconstruct the "request" which will be used as %THIS% when reading the CONFIG_FILE
+# Reconstruct the "request" which will be used as %THIS% when reading the config_file
 
-THIS=$(basename "$CONFIG_FILE")
-THIS=${THIS%%_*}  # everyting after "_" removed
+this=$(basename "$config_file")
+this=${this%%_*}  # everyting after "_" removed
 
-# --- Extract information from CONFIG_FILE using Perl script
+# --- Extract information from config_file using Perl script
 
-EE="$DIR/login/bin/hidden/extract.pl"
+eex="$dir/login/bin/hidden/extract.pl"
 
 # This shall be filled (or not)
 # If the called script exits with error, we exit too and assume a message has been printed.
 # Values may be missing. That is not a problem as they may be on the command line.
-# Same value cannot be found at the same time, even (case of HARDCODED_DNS and HARDCODED_IP)
-# A missing value may mean NO in case of booleans (case of USE_NOSTRICT)
+# Same value cannot be found at the same time, even (case of hardcoded_dns and hardcoded_ip)
+# A missing value may mean NO in case of booleans (case of use_nostrict)
 
-HARDCODED_DNS=$($EE "$CONFIG_FILE" "HARDCODED_DNS") || exit 1
-HARDCODED_IP=$($EE "$CONFIG_FILE" "HARDCODED_IP")   || exit 1
-USER=$($EE "$CONFIG_FILE" "USER")                   || exit 1
-PRIVKEY=$($EE "$CONFIG_FILE" "PRIVKEY")             || exit 1
-HARDCODED_PORT=$($EE "$CONFIG_FILE" "PORT")         || exit 1
-USE_NOSTRICT=$($EE "$CONFIG_FILE" "USE_NOSTRICT")   || exit 1
-DESC=$($EE "$CONFIG_FILE" "DESC")                   || exit 1
-TUNNEL=$($EE "$CONFIG_FILE" "TUNNEL")               || exit 1
+hardcoded_dns=$($eex "$config_file" "HARDCODED_DNS") || exit 1
+hardcoded_ip=$($eex "$config_file" "HARDCODED_IP")   || exit 1
+user=$($eex "$config_file" "USER")                   || exit 1
+privkey=$($eex "$config_file" "PRIVKEY")             || exit 1
+hardcoded_port=$($eex "$config_file" "PORT")         || exit 1
+use_nostrict=$($eex "$config_file" "USE_NOSTRICT")   || exit 1   # Not in the command line...
+desc=$($eex "$config_file" "DESC")                   || exit 1
+tunnel=$($eex "$config_file" "TUNNEL")               || exit 1   # Create a tunnel on the remote
+socks_proxy_arg=                                                # Only on the command line
 
 # --- A description which may or may not exist
 # Print colored, see: http://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-echo-in-linux
 
-if [[ -n $DESC ]]; then
-   writeColored "Target description" "$DESC"
+if [[ -n $desc ]]; then
+   writeColored "Target description" "$desc"
 fi
 
-# --- If USER is unset or the string %ACTUAL% then replace by the result of "whoami"
+# --- If $user is unset or the string %ACTUAL% then replace by the result of "whoami"
 
-if [[ -z $USER || $USER == "%ACTUAL%" ]]; then
-   USER=$(whoami)
-   SELUSER="Current user '$USER'"
+if [[ -z $user || $user == "%ACTUAL%" ]]; then
+   user=$(whoami)
+   seluser="Current user '$user'"
 else
-   SELUSER="Specified user '$USER'"
+   seluser="Specified user '$user'"
 fi
 
-writeColored "Selected user" "$SELUSER"
+writeColored "Selected user" "$seluser"
 
-# --- Set the 'PORT' by checking available values
 
-if [[ -n $CMDLINE_PORT ]]; then
-   PORT=$CMDLINE_PORT
-   SELPORT="command line port $PORT"
-elif [[ -n $HARDCODED_PORT ]]; then
-   PORT=$HARDCODED_PORT
-   SELPORT="hardcoded port $PORT"
+# --- Set the port on the remote machine, if needed
+
+if [[ -n $cmdline_port ]]; then
+   port=$cmdline_port
+   selport="command line port $port"
+elif [[ -n $hardcoded_port ]]; then
+   port=$hardcoded_port
+   selport="hardcoded port $port"
 else
-   PORT=
-   SELPORT="no port specified (using default value 22)"
+   port=
+   selport="no port specified (using default value 22)"
 fi
 
-writeColored "Selected port" "$SELPORT"
+writeColored "Selected port" "$selport"
 
-# --- Set the 'TARGET' by checking available values; take the first that applies
 
-if [[ -n $HARDCODED_DNS && -n $HARDCODED_IP ]]; then
-   echo "Both hardcoded DNS ($HARDCODED_DNS) and hardcoded IP ($HARDCODED_IP) are set. What do? -- exiting" >&2
+# --- Set the local SOCKS proxy endpoint, if needed
+
+if [[ -n $cmdline_proxyport ]]; then
+   if [[ -z $cmdline_proxybind ]]; then
+      socks_proxy_arg="127.0.0.1:$cmdline_proxyport"
+   elif [[ ${cmdline_proxybind,,} == any ]]; then
+      # note: lowercased in the comparison, so "ANY" or "aNY" are good, too
+      socks_proxy_arg="*:$cmdline_proxyport"
+   else 
+      socks_proxy_arg="$cmdline_proxybind:$cmdline_proxyport"
+   fi 
+
+   writeColored "Socks proxy on $socks_proxy_arg"
+fi
+
+
+# --- Set the 'target' by checking available values; take the first that applies
+
+if [[ -n $hardcoded_dns && -n $hardcoded_ip ]]; then
+   echo "Both hardcoded DNS ($hardcoded_dns) and hardcoded IP ($hardcoded_ip) are set. What do? -- exiting" >&2
    exit 1
 fi
 
-TARGET=
-SELECTED=
-REVERSE1=
-REVERSE2=
-FORWARD1=
-FORWARD2=
+target=
+selected=
+reverse1=
+reverse2=
+forward1=
+forward2=
 
-if [[ -n $CMDLINE_IP ]]; then
-   TARGET=$CMDLINE_IP
-   SELECTED="command line host IP"
-   REVERSE1=$(reverseResolve "$TARGET")
+if [[ -n $cmdline_ip ]]; then
+   target=$cmdline_ip
+   selected="command line host IP"
+   reverse1=$(reverseResolve "$target")
 fi
 
-if [[ -z $TARGET && -n $CMDLINE_DNS ]]; then
-   TARGET=$CMDLINE_DNS
-   SELECTED="command line host name"
-   FORWARD1=$(forwardResolve "$TARGET")
+if [[ -z $target && -n $cmdline_dns ]]; then
+   target=$cmdline_dns
+   selected="command line host name"
+   forward1=$(forwardResolve "$target")
 fi
 
-if [[ -z $TARGET && -n $HARDCODED_IP ]]; then
-   TARGET=$HARDCODED_IP
-   SELECTED="hardcoded IP"
-   REVERSE2=$(reverseResolve "$TARGET")
+if [[ -z $target && -n $hardcoded_ip ]]; then
+   target=$hardcoded_ip
+   selected="hardcoded IP"
+   reverse2=$(reverseResolve "$target")
 fi
 
-if [[ -z $TARGET && -n $HARDCODED_DNS ]]; then
-   # If a %THIS% is in the HARDCODED_DNS, replace by name of the request, i.e. the name of the config file itself: REQUEST 
-   # TARGET=$(echo "$HARDCODED_DNS" | sed "s/%THIS%/$THIS/g")
-   TARGET=${HARDCODED_DNS//%THIS%/$THIS}
-   SELECTED="hardcoded host name"
-   if [[ $TARGET != "$HARDCODED_DNS" ]]; then
-      MORETEXT1=" (modified to '$TARGET')"
+if [[ -z $target && -n $hardcoded_dns ]]; then
+   # If a %THIS% is in the hardcoded_dns, replace by name of the request, i.e. the name of the config file itself: REQUEST 
+   # target=$(echo "$hardcoded_dns" | sed "s/%THIS%/$this/g")
+   target=${hardcoded_dns//%THIS%/$this}
+   selected="hardcoded host name"
+   if [[ $target != "$hardcoded_dns" ]]; then
+      moretext1=" (modified to '$target')"
    else
-      MORETEXT1=""
+      moretext1=""
    fi
-   MORETEXT2=$(forwardResolve "$TARGET")
-   FORWARD2="$MORETEXT1 $MORETEXT2"
+   moretext2=$(forwardResolve "$target")
+   forward2="$moretext1 $moretext2"
 fi
 
-if [[ -z $TARGET ]]; then
+if [[ -z $target ]]; then
    echo "Could not determine to which host to connect; nothing on the command line or in the script" >&2
 fi
 
 # do not include spacing or markup in the second string so that it stays empty if the values are empty!
 
-writeColored "Command line host IP"   "${CMDLINE_IP}${REVERSE1}"
-writeColored "Command line host name" "${CMDLINE_DNS}${FORWARD1}"
-writeColored "Hardcoded host IP"      "${HARDCODED_IP}${REVERSE2}"
-writeColored "Hardcoded host name"    "${HARDCODED_DNS}${FORWARD2}"
+writeColored "Command line host IP"   "${cmdline_ip}${reverse1}"
+writeColored "Command line host name" "${cmdline_dns}${forward1}"
+writeColored "Hardcoded host IP"      "${hardcoded_ip}${reverse2}"
+writeColored "Hardcoded host name"    "${hardcoded_dns}${forward2}"
 
-if [[ -n $SELECTED ]]; then
-   writeColored "Selected target" "$SELECTED '$TARGET'"
+if [[ -n $selected ]]; then
+   writeColored "Selected target" "$selected '$target'"
 fi
 
-if [[ -z $TARGET ]]; then
+if [[ -z $target ]]; then
    echo "Exiting" >&2
    exit 1
 fi
 
 # --- Build the command array for "exec" to run SSH, SFTP or firefox
 
-declare -a CMDARR
-CMDARR[0]=$CMD
-I=1
+declare -a cmdarr
 
-if [[ $CMD == http || $CMD == https ]]; then
+if [[ $mode =~ ^https?$ ]]; then
 
-   CMDARR[0]="firefox"
-   if [[ $CMD == http ]]; then   
-      CMDARR[1]="http://${TARGET}"
+   cmdarr[0]="firefox"
+   if [[ $mode == http ]]; then   
+      cmdarr[1]="http://${target}"
    else 
-      CMDARR[1]="https://${TARGET}"
+      cmdarr[1]="https://${target}"
    fi
 
 else
 
-   CMDARR[$I]="-oConnectTimeout=2"
+   cmdarr[0]=$mode
+
+   I=1
+   cmdarr[$I]="-oConnectTimeout=15"
    (( I++ ))
  
-   if [[ -n $USE_X11_FWD ]]; then
-      CMDARR[$I]="-oForwardX11=yes"
+   if [[ -n $use_x11_fwd ]]; then
+      cmdarr[$I]="-oForwardX11=yes"
       (( I++ ))
    fi
 
-   if [[ -n $USE_VERBOSE ]]; then
-      CMDARR[$I]="-vvv" # Really verbose!
+   if [[ -n $use_verbose ]]; then
+      cmdarr[$I]="-vvv" # Really verbose!
       (( I++ ))
    fi
 
-   if [[ -n $PORT ]]; then
-      CMDARR[$I]="-oPort=${PORT}" 
+   if [[ -n $port ]]; then
+      cmdarr[$I]="-oPort=${port}" 
       (( I++ ))
    fi
 
-   if [[ -n $USE_NOSTRICT ]]; then
-      CMDARR[$I]="-oStrictHostKeyChecking=no"
+   if [[ -n $use_nostrict ]]; then
+      cmdarr[$I]="-oStrictHostKeyChecking=no"
       (( I++ ))
    fi 
 
-   if [[ -n $TUNNEL ]]; then
-      CMDARR[$I]="-L${TUNNEL}"
+   if [[ -n $socks_proxy_arg ]]; then
+      cmdarr[$I]="-D${socks_proxy_arg}"
+      (( I++ ))
+   fi
+
+   if [[ -n $tunnel ]]; then
+      cmdarr[$I]="-L${tunnel}"
       (( I++ ))
    fi 
 
-   if [[ -n $PRIVKEY ]]; then
+   if [[ -n $privkey ]]; then
 
-      # Replace certain strings in the PRIVKEY string:
-      # %USER% --> login user: USER
-      # %THIS% --> $THIS (basically the name of the config file with everything after the first _ removed)
+      # Replace certain strings in the privkey string:
+      # %USER% --> login user: $user
+      # %THIS% --> $this (basically the name of the config file with everything after the first _ removed)
 
-      NEWPRIVKEY=$(echo "$PRIVKEY" | sed "s/%USER%/$USER/g" | sed "s/%THIS%/$THIS/g")
+      newprivkey=$(echo "$privkey" | sed "s/%USER%/${user}/g" | sed "s/%THIS%/${this}/g")
 
-      if [[ "$NEWPRIVKEY" != "$PRIVKEY" ]]; then
-         # echo "Private key patched from '$PRIVKEY' to '$NEWPRIVKEY'" >&2
-         PRIVKEY="$NEWPRIVKEY"
+      if [[ "$newprivkey" != "$privkey" ]]; then
+         # echo "Private key patched from '$privkey' to '$newprivkey'" >&2
+         privkey="$newprivkey"
       fi
 
-      # echo "Private key to use is '$PRIVKEY'" >&2
+      # echo "Private key to use is '$privkey'" >&2
 
-      if [[ $PRIVKEY == /* ]]; then
+      if [[ $privkey == /* ]]; then
          # absolute
-         KEY=$PRIVKEY
+         KEY=$privkey
       else
-         # find the key under KEYDIR
-         if [[ ! -d $KEYDIR ]]; then 
-            echo "The keydirectory '$KEYDIR' does not exist or is not accessible -- exiting" >&2
+         # find the key under keydir
+         if [[ ! -d $keydir ]]; then 
+            echo "The keydirectory '$keydir' does not exist or is not accessible -- exiting" >&2
             exit 1
          fi
-         COUNT=$(find "$KEYDIR" -name "$PRIVKEY" -type f | wc -l)
-         if [[ $COUNT -eq 0 ]]; then
-            echo "The private key directory '$KEYDIR' contains no file named '$PRIVKEY' -- exiting" >&2
+         count=$(find "$keydir" -name "$privkey" -type f | wc -l)
+         if [[ $count -eq 0 ]]; then
+            echo "The private key directory '$keydir' contains no file named '$privkey' -- exiting" >&2
             exit 1
          fi
-         if [[ $COUNT -gt 1 ]]; then
-            echo "The private key directory '$KEYDIR' contains $COUNT files named '$PRIVKEY'. Unsure which to use -- exiting" >&2
+         if [[ $count -gt 1 ]]; then
+            echo "The private key directory '$keydir' contains $count files named '$privkey'. Unsure which to use -- exiting" >&2
             exit 1
          fi
-         KEY=$(find "$KEYDIR" -name "$PRIVKEY" -type f)
+         KEY=$(find "$keydir" -name "$privkey" -type f)
       fi
 
       if [[ ! -f $KEY ]]; then
@@ -867,49 +957,49 @@ else
 
       fixKeyFilePermissions "$KEY"
 
-      CMDARR[$I]="-i$KEY" 
+      cmdarr[$I]="-i$KEY" 
       (( I++ ))
 
   fi
 
-   CMDARR[$I]="${USER}@${TARGET}"
+   cmdarr[$I]="${user}@${target}"
    (( I++ ))
 
-   if [[ -n $SCRIPT_TO_RUN ]]; then
-      CMDARR[$I]=$SCRIPT_TO_RUN
+   if [[ -n $script_to_run ]]; then
+      cmdarr[$I]=$script_to_run
    fi
  
 fi
 
 # --- Connect ---
 
-echo "Will run this command: ${CMDARR[*]}" >&2
+echo "Will run this command: ${cmdarr[*]}" >&2
 
-if [[ -z $TOUCH_REMOTE ]]; then
+if [[ -z $touch_remote ]]; then
    # Run the SSH command. 
    # Should we replace the current process using "exec" or run in subshell? Both work fine!
    # But if we run in subshell (and wait), we can do something on return, which is better.
-   # exec "${CMDARR[@]}"
+   # exec "${cmdarr[@]}"
    # To compute duration, use "SECONDS", a built-in variable
    # https://stackoverflow.com/questions/8903239/how-to-calculate-time-difference-in-bash-script
    SECONDS=0 
-   "${CMDARR[@]}"
-   RES=$?
+   "${cmdarr[@]}"
+   res=$?
    duration=$SECONDS
-   if [[ $RES != 0 ]]; then
-      writeError "*** Some problem occurred. Return value is $RES. ***"
+   if [[ $res != 0 ]]; then
+      writeError "*** Some problem occurred. Return value is $res. ***"
       if [[ $duration -gt 100 ]]; then
          writeError "It is now $(date)"
       fi
    fi
    txt="Connected for $(textifyDuration $duration)"
-   if [[ $RES != 0 ]]; then
+   if [[ $res != 0 ]]; then
       writeError "$txt"
    else
       echo "$txt" >&2
    fi
 else
-   "${CMDARR[@]}" << HERE
+   "${cmdarr[@]}" << HERE
 echo "------"
 echo -n "Hostname: "; hostname
 echo -n "System  : "
