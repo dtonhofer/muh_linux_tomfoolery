@@ -71,7 +71,11 @@ function transformDatetime {
 function dateTimeFromDateTimeOriginal {
    local NAME=dateTimeFromDateTimeOriginal
    local FILE=$1
-   local DATETIME=$(exiftool -l "-EXIF:DateTimeOriginal" "$FILE" | tail -1)
+   if [[ $MIME == "video/quicktime" || $MIME == "video/mp4" ]]; then
+     local DATETIME=$(exiftool -l "-MediaCreateDate" "$FILE" | tail -1)
+   else
+     local DATETIME=$(exiftool -l "-EXIF:DateTimeOriginal" "$FILE" | tail -1)
+   fi
    if [[ $? != 0 ]]; then
       echo "$NAME(): exiftool returned $?" >&2
       return
@@ -131,6 +135,10 @@ function processFile {
       SUFFIX=".png"
    elif [[ $MIME == 'image/gif' ]]; then
       SUFFIX=".gif"
+   elif [[ $MIME == 'video/quicktime' ]]; then
+      SUFFIX=".mov"
+   elif [[ $MIME == 'video/mp4' ]]; then
+      SUFFIX=".mp4"
    elif [[ $MIME == 'image/x-canon-cr2' ]]; then
       SUFFIX=".cr2"
    else
@@ -154,7 +162,7 @@ function processFile {
 
    eval "$CMD"
 
-   local NEW="${Y}-${M}-${D}_${h}:${m}:${s}"
+   local NEW="${Y}${M}${D}_${h}${m}${s}"
 
    echo "New name base: $NEW" >&2
 
